@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+lxml
+protego
+pandas
+# fusul orar Europe/Bucharest pe Windows (zoneinfo nu îl găsește altfel)
+tzdata
+# doar dacă un magazin cere browser automat (--browser):
+# playwright

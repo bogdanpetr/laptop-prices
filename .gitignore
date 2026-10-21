@@ -1,0 +1,21 @@
+# mediul virtual și cache-ul Python
+.venv/
+__pycache__/
+
+# setările editorului (PyCharm, VS Code)
+.idea/
+.vscode/
+
+# paginile HTML ale magazinelor rămân doar local: cele salvate de --test și cele salvate din browser
+data/debug/
+pagini_magazine/
+
+# jurnalul rulărilor programate și fișierele temporare rămase după o oprire forțată în timpul scrierii
+data/crawl.log
+*.tmp
+
+# baza SQLite rămâne locală; în repo se publică CSV-urile zilnice din data/raw/
+data/laptops.db*
+
+# tabelele de benchmark descărcate de pe Notebookcheck (în products.csv intră doar scorurile potrivite)
+data/external/

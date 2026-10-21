@@ -1,0 +1,19 @@
+{
+  "shop": "emag",
+  "started_at": "2026-10-21T19:47:22+03:00",
+  "price_range": [
+    10000,
+    20000
+  ],
+  "pages": 34,
+  "products": 2034,
+  "seen_total": 2035,
+  "no_price": 0,
+  "stopped_because": "blocat (HTTP 511) la pagina 35",
+  "complete": false,
+  "methods": {
+    "selector": 34
+  },
+  "blocked": true,
+  "finished_at": "2026-10-21T19:50:53+03:00"
+}

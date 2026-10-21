@@ -1,0 +1,18 @@
+{
+  "shop": "evomag",
+  "started_at": "2026-10-21T19:50:53+03:00",
+  "price_range": [
+    10000,
+    20000
+  ],
+  "pages": 39,
+  "products": 571,
+  "seen_total": 1852,
+  "no_price": 0,
+  "stopped_because": "nu există pagină următoare după pagina 39",
+  "complete": true,
+  "methods": {
+    "selector": 39
+  },
+  "finished_at": "2026-10-21T19:54:35+03:00"
+}
