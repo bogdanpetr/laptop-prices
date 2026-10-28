@@ -493,8 +493,8 @@ def main():
                 continue
 
             if not log.get("blocked"):  # un magazin care ne blochează azi nu mai primește nici cereri pentru part number
-                found += [{"shop": name, "product_id": r["product_id"], "url": r["url"], "title": r["title"]}
-                          for r in rows]
+                found += [{"shop": name, "product_id": r["product_id"], "url": r["url"], "title": r["title"],
+                           "price": r["price"]} for r in rows]
             if con is None:
                 con = connect(args.db)
             typical = typical_count(con, name, day, args.min_price, args.max_price)

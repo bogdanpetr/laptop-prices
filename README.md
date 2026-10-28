@@ -86,17 +86,24 @@ datele bune salvate deja în ziua respectivă nu sunt înlocuite de o rulare inc
 După ce prețurile zilei sunt salvate, crawlerul deschide pagina fiecărui produs **nou** (cel mult 300 pe rulare,
 cu cel puțin 8 secunde între două cereri la eMAG și 15 la evoMAG, ca să nu declanșeze blocarea anti-bot)
 și îi citește part number-ul în `data/raw/part_numbers.csv`. Un produs se verifică o singură dată, așa că
-zilnic rămân doar produsele apărute între timp (~190 pe zi); restul locurilor din cele 300 completează treptat
-produsele colectate în zilele anterioare. Nu completa totul dintr-o dată (`python extraction/part_numbers.py
---max 6000`): sute de pagini eMAG la rând au dus pe 21.10 la blocarea adresei IP („trafic neobișnuit de mare”),
-iar o blocare pune în pericol prețurile zilei, care nu se mai pot recupera. Part number-ul nu se schimbă,
-deci nu se pierde nimic dacă e citit peste câteva zile.
+zilnic rămân doar produsele apărute între timp; restul locurilor completează treptat produsele colectate în
+zilele anterioare. La eMAG se deschid cel mult 150 de pagini pe zi, oricât de mare e `--max`, numărate în
+toate rulările zilei (crawlerul și `part_numbers.py` rulat separat): sute de pagini eMAG pe zi au dus pe 21.10
+și 23.10 la blocarea adresei IP (HTTP 511, „trafic neobișnuit de mare”). Produsele eMAG rămase se verifică
+singure în zilele următoare, la rulările crawlerului; după ce limita zilei e atinsă, o nouă rulare în aceeași
+zi nu mai deschide pagini eMAG.
+Produsele eMAG cu preț întreg (fără bani) nu se deschid deloc: sunt aproape toate oferte ale unui vânzător
+din marketplace cu coduri inventate (doar 5% aveau part number, față de 65% la prețurile cu bani). O blocare
+la acest pas nu afectează prețurile zilei, salvate deja; part number-ul nu se schimbă, deci nu se pierde
+nimic dacă e citit peste câteva zile.
 
 **De ce part number-ul nu înlocuiește codul magazinului.** Lista de produse, din care se iau zilnic prețurile,
 are doar codul intern al magazinului (`product_id`); part number-ul apare numai în pagina produsului. Colectarea
 zilnică rămâne deci legată de `product_id`, iar `part_numbers.csv` îi asociază part number-ul. Acesta lipsește
 la configurațiile modificate de vânzătorii din marketplace-ul eMAG (RAM sau SSD mărite), care nu au un part
-number real: acolo vânzătorii trec coduri proprii (`213440GB1TB`), care sunt ignorate.
+number real: acolo vânzătorii trec coduri proprii (`213440GB1TB`), care sunt ignorate. Part number-ul e păstrat
+doar cu litere mari și cifre, fiindcă CEL îl scrie fără semne (`MDVC4ROA`, `NHU64EX00B`), iar eMAG și evoMAG
+cu semne (`MDVC4RO/A`, `NH.U64EX.00B`); forma afișată de magazin rămâne în coloana `code`.
 
 ### 3. Setul de date cu specificații
 
@@ -115,7 +122,7 @@ e deschis în Excel, închide-l întâi. Fișierul e salvat în UTF-8 cu BOM, ca
 
 | Coloane | Conținut |
 | --- | --- |
-| `part_number`, `seller` | Codul producătorului (același laptop are același cod în toate magazinele) și vânzătorul; goale la produsele fără part number real sau încă neverificate |
+| `part_number`, `seller` | Codul producătorului, doar litere și cifre (același laptop are același cod în toate magazinele) și vânzătorul; goale la produsele fără part number real sau încă neverificate |
 | `brand` | Producătorul (Lenovo, ASUS, HP, Dell, Apple...); sub-mărcile duc la producător (Legion -> Lenovo) |
 | `cpu_brand`, `cpu_model`, `cpu_tier`, `cpu_suffix`, `cpu_cores` | Procesorul: Intel / AMD / Apple / Qualcomm, modelul normalizat (`Core Ultra 7 255H`, `Ryzen AI 9 HX 370`, `M5 Pro`), nivelul 3/5/7/9, sufixul (U, H, HX...) și numărul de nuclee (din Notebookcheck; din titlu dacă procesorul nu e în listă) |
 | `ram_gb`, `ram_type`, `storage_gb` | Memoria (GB, DDR5 / LPDDR5X...) și stocarea (GB; 1 TB = 1024) |
@@ -290,7 +297,8 @@ df = df.merge(pn[["shop", "product_id", "part_number"]], on=["shop", "product_id
    datele structurate ale paginii (`mpn`), la evoMAG din codul produsului, la eMAG din `mpn`. Codurile puse de
    vânzătorii din marketplace se păstrează doar dacă au forma part number-ului producătorului (de exemplu
    10 caractere la Lenovo: `83F50047BM`); codul brut rămâne în coloana `code` din `part_numbers.csv`. La Dell,
-   magazinele folosesc codul configurației (`PB14250FU7265U32GB1TBW3Y-05`), valabil doar în magazinul respectiv.
+   magazinele folosesc codul configurației (`BTO108_PC16250_EMEA`). Part number-ul e păstrat fără semne
+   (`BTO108PC16250EMEA`), ca să fie identic la CEL, evoMAG și eMAG.
    Cererile alternează între magazine, iar un magazin care cere captcha e sărit până la rularea următoare.
 6. `build_dataset.py` extrage specificațiile din titluri, adaugă part number-ul și scorurile de performanță de
    pe Notebookcheck și face setul final `data/processed/products.csv`.

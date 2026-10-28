@@ -50,6 +50,7 @@ BRANDS = [
     ("acer|predator|nitro|aspire|swift|travelmate|extensa", "Acer"),
     (r"msi|katana|stealth|raider|titan(?!\s*gr[ae]y)|cyborg|crosshair|sword|vector|prestige", "MSI"),
     ("gigabyte|aorus", "Gigabyte"),
+    (r"dream\s*machines", "Dream Machines"),
     ("razer|blade", "Razer"),
     ("samsung|galaxy book", "Samsung"),
     ("microsoft|surface", "Microsoft"),
@@ -88,6 +89,12 @@ def _suffix(number):
     return m.group(1).upper() if m else None
 
 
+def _amd_suffix(number):
+    """'7840hs' -> 'HS', '9955hx3d' -> 'HX', '350' -> None"""
+    m = re.match(r"\d+([a-z]*)", number)
+    return m.group(1).upper() or None if m else None
+
+
 def _cpu(t, brand):
     """(producător, model, nivel 3/5/7/9, sufix U/H/HX...)"""
     if brand == "Apple" or "apple m" in t or "apple a" in t:
@@ -108,31 +115,63 @@ def _cpu(t, brand):
     m = re.search(r"\bi([3579])\s*(?:processor\s+)?-?\s*(n?\d{3,5}[a-z]{0,2})\b", t)
     if m:
         return "Intel", f"Core i{m.group(1)}-{m.group(2).upper()}", int(m.group(1)), _suffix(m.group(2))
-    m = re.search(r"\b(?:intel\s+core|intel|core)\s+([3579])\s+(\d{3}[a-z]{0,2})\b", t)  # 'Intel Core 5 120U', 'Intel 9 270H'
+    # 'Intel Core 5 120U', 'Intel 9 270H', 'Core 5-210H', 'Core 7- 150U'
+    m = re.search(r"\b(?:intel\s+core|intel|core)\s+([3579])(?:\s+|\s*-\s*)(\d{3}[a-z]{0,2})\b", t)
     if m:
         return "Intel", f"Core {m.group(1)} {m.group(2).upper()}", int(m.group(1)), _suffix(m.group(2))
-    m = re.search(r"\bintel\s+(?:core\s+)?(\d{3}(?:hx|h|u|v))\b", t)  # 'Intel 285HX', 'Intel 240H': nivelul separat sau lipsă
+    # 'Intel 285HX', 'Intel 240H', 'Intel 325 8 C': nivelul separat sau lipsă (nu 'Intel 600 nits')
+    m = re.search(r"\bintel\s+(?:core\s+)?(\d{3}(?:hx|h|u|v)?)\b(?!\s*(?:mhz|ghz|gb|mb|w|nits|hz)\b)", t)
     if m:
         tier = int(ultra.group(1)[-1]) if ultra else None
         name = f"Core Ultra {ultra.group(1).upper()} {m.group(1).upper()}" if ultra else f"Core {m.group(1).upper()}"
         return "Intel", name, tier, _suffix(m.group(1))
+    m = re.search(r"\bintel\s+(?:core\s+)?(1[0-4]\d{3}(?:hx|hs|h|u|p)?)\b", t)  # 'Intel 13420H', fără i5/i7
+    if m:
+        return "Intel", f"Core {m.group(1).upper()}", None, _suffix(m.group(1))
     if ultra:  # 'Intel Core Ultra 9' fără model
         return "Intel", f"Core Ultra {ultra.group(1).upper()}", int(ultra.group(1)[-1]), None
+    m = re.search(r"\bultra\s+(\d{3}(?:hx|h|u|v)?)\b", t)  # 'Intel Core Ultra 275HX', fără nivel
+    if m:
+        return "Intel", f"Core Ultra {m.group(1).upper()}", None, _suffix(m.group(1))
+    m = re.search(r"\bult\s*([579])\s*-\s*(\d{3}[a-z]{0,2})\b", t)  # 'ULT5-325'
+    if m:
+        return "Intel", f"Core Ultra {m.group(1)} {m.group(2).upper()}", int(m.group(1)), _suffix(m.group(2))
     m = re.search(r"\bcore\s*i([3579])\b", t)
     if m:
         return "Intel", f"Core i{m.group(1)}", int(m.group(1)), None
     # 'a[il]': unele titluri scriu 'Ryzen Al 9' (cu L în loc de I)
-    m = re.search(r"ryzen\s*a[il]\s*max\s*(\+?)\s*(?:pro\s*)?(\d{3})\b", t)  # 'Max+ 395', 'Max 390'
+    m = re.search(r"(?:ryzen|amd)\s*a[il]\s*max\s*(\+?)\s*(?:pro\s*)?(\d{3})\b", t)  # 'Max+ 395', 'AMD Al Max 395'
     if m:
         return "AMD", f"Ryzen AI Max{m.group(1)} {m.group(2)}", 9, None
-    m = re.search(r"ryzen\s*(a[il]\s*)?([3579])\s+(pro\s+)?(hx\s+)?(\d{3,4}[a-z]{0,3})\b", t)
+    # 'Ryzen 7 7840HS', 'Ryzen AI 9 HX 370', 'Ryzen R9 5900HX', 'Ryzen 9 9955HX3D'
+    m = re.search(r"ryzen\s*(a[il]\s*)?r?([3579])\s+(pro\s+)?(hx\s+)?(\d{3,4}(?:[a-z]{1,3}(?:3d)?)?)\b", t)
     if m:
         name = ("Ryzen AI " if m.group(1) else "Ryzen ") + m.group(2) + (" PRO" if m.group(3) else "")
         name += (" HX" if m.group(4) else "") + " " + m.group(5).upper()
-        return "AMD", name, int(m.group(2)), "HX" if m.group(4) else _suffix(m.group(5))
+        return "AMD", name, int(m.group(2)), "HX" if m.group(4) else _amd_suffix(m.group(5))
     m = re.search(r"ryzen\s*(a[il]\s*)?([3579])\b", t)  # model lipsă sau trunchiat ('Ryzen 3 30')
     if m:
         return "AMD", ("Ryzen AI " if m.group(1) else "Ryzen ") + m.group(2), int(m.group(2)), None
+    # fără cuvântul 'Ryzen': 'AMD AI 7 350', 'AMD R5 AI PRO 440', 'AMD R7 249', 'R9 9955HX3D', 'AMD 260 8 C / 16 T'
+    m = re.search(r"\bamd\s+(?:r([3579])\s+)?a[il]\s+(?:([3579])\s+)?(pro\s+)?(\d{3})\b", t)
+    if m and (m.group(1) or m.group(2)):
+        tier = m.group(2) or m.group(1)
+        return "AMD", f"Ryzen AI {tier}" + (" PRO" if m.group(3) else "") + f" {m.group(4)}", int(tier), None
+    m = (re.search(r"\bamd\s+r([3579])\s+(pro\s+)?(\d{3,4}(?:[a-z]{1,3}(?:3d)?)?)\b", t)
+         or re.search(r"\br([3579])\s+()(\d{4}h[sx]?(?:3d)?)\b", t))
+    if m:
+        return ("AMD", f"Ryzen {m.group(1)}" + (" PRO" if m.group(2) else "") + f" {m.group(3).upper()}",
+                int(m.group(1)), _amd_suffix(m.group(3)))
+    m = re.search(r"\bamd\s+(\d{3})\b(?=\s+\d{1,2}\s*c\b)", t)
+    if m:
+        return "AMD", f"Ryzen {m.group(1)}", None, None
+    # Intel fără model, după regulile AMD ('8 core 5.1 GHz' nu e un 'Core 5'): 'procesor i7', 'Intel Core 5,'
+    m = re.search(r"(?:^|[\s,(/])i([3579])(?=$|[\s,()/])", t)
+    if m:
+        return "Intel", f"Core i{m.group(1)}", int(m.group(1)), None
+    m = re.search(r"(?:\bintel\s+core|(?:^|[,/(])\s*core)\s+([3579])(?![.,]?\d)\b", t)
+    if m:
+        return "Intel", f"Core {m.group(1)}", int(m.group(1)), None
     m = re.search(r"\b(celeron|pentium(?:\s+silver|\s+gold)?|atom)\s*(n?\d{3,4}[a-z]?)?", t)
     if m:
         return "Intel", m.group(1).title() + (f" {m.group(2).upper()}" if m.group(2) else ""), None, None

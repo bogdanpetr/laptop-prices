@@ -1,19 +1,18 @@
 {
   "shop": "emag",
-  "started_at": "2026-10-21T19:47:22+03:00",
+  "started_at": "2026-10-21T23:00:09+03:00",
   "price_range": [
     10000,
     20000
   ],
-  "pages": 34,
-  "products": 2034,
-  "seen_total": 2035,
+  "pages": 78,
+  "products": 4616,
+  "seen_total": 4617,
   "no_price": 0,
-  "stopped_because": "blocat (HTTP 511) la pagina 35",
-  "complete": false,
+  "stopped_because": "pagina 79 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p79/c (sfârșitul listei)",
+  "complete": true,
   "methods": {
-    "selector": 34
+    "selector": 78
   },
-  "blocked": true,
-  "finished_at": "2026-10-21T19:50:53+03:00"
+  "finished_at": "2026-10-21T23:07:40+03:00"
 }

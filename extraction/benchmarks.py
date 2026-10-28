@@ -177,9 +177,14 @@ def match_cpu(cpu_brand, cpu_model, cpu_cores, keys):
     m = re.fullmatch(r"Core i(\d)-(\d{3}[A-Z]*)", cpu_model)  # 'i5-210H' scris greșit în titlu = 'Core 5 210H'
     if found is None and m:
         found = _pick(key(f"Core {m.group(1)} {m.group(2)}"), keys)
-    num = re.search(r"\b(\d{3}[a-z]{0,2})$", k)  # 'Core 7 255HX' fără 'Ultra', 'Intel 240H' / 'Intel 358H' fără nivel
+    # 'Core 7 255HX' fără 'Ultra', 'Intel 240H' / 'Intel 358H' fără nivel, 'Intel 13420H' fără i5
+    num = re.search(r"\b(\d{3,5}[a-z]{0,2})$", k)
     if found is None and cpu_brand == "Intel" and num:
-        same = [c for c in keys if re.fullmatch(rf"(?:ultra )?x?[3579] {re.escape(num.group(1))}", c)]
+        same = [c for c in keys if re.fullmatch(rf"(?:ultra |i)?x?[3579] {re.escape(num.group(1))}", c)]
+        found = same[0] if len(same) == 1 else None
+    if found is None and cpu_brand == "AMD" and num and re.fullmatch(r"ryzen \d{3}", k):  # 'AMD 260 8 C' fără nivel
+        same = [c for c in keys if re.fullmatch(rf"ryzen (?:ai )?[3579] (?:pro )?{re.escape(num.group(1))}", c)]
+        same = [c for c in same if " pro " not in c] or same  # titlul nu spune PRO
         found = same[0] if len(same) == 1 else None
     if found is None and cpu_brand == "AMD":  # 'AI' sau '+' lipsă / în plus: 'Ryzen 5 PRO 340' = 'Ryzen AI 5 PRO 340'
         alts = {k.replace("max+", "max"), k.replace("max ", "max+ "),

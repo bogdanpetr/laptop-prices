@@ -15,6 +15,7 @@ Exemplu:
     python extraction/build_dataset.py
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -58,6 +59,16 @@ def build_products(prices):
     return products[["shop", "product_id", "title", *SPEC_COLUMNS, *PRICE_SUMMARY, "url"]]
 
 
+def incomplete_days(raw_dir):
+    """(zi, magazin, produse) pentru rulările salvate care nu au ajuns la sfârșitul listei."""
+    out = []
+    for log_path in sorted(raw_dir.glob("*/*_log.json")):
+        log = json.loads(log_path.read_text(encoding="utf-8"))
+        if log.get("complete") is False and (log_path.parent / f"{log['shop']}.csv.gz").exists():
+            out.append((log_path.parent.name, log["shop"], log.get("products")))
+    return out
+
+
 def add_part_numbers(products, path):
     """Coloanele part_number și seller; goale la produsele fără part number sau încă neverificate.
     Întoarce și câte produse nu au fost verificate încă."""
@@ -98,7 +109,13 @@ def main():
     print(f"\nPart number: {has_pn.mean():.0%} din produse ({by_shop}); "
           f"{(in_shops >= 2).sum()} part number-uri apar în cel puțin două magazine")
     if unchecked:
-        print(f"   {unchecked} produse încă neverificate: python extraction/part_numbers.py --max 6000")
+        print(f"   {unchecked} produse încă neverificate (se completează treptat la rulările zilnice)")
+    incomplete = incomplete_days(args.raw)
+    if incomplete:
+        print("\nAtenție, zile incomplete (rulare oprită de o blocare sau eroare): "
+              + ", ".join(f"{day} {shop} ({n} produse)" for day, shop, n in incomplete)
+              + ".\n   Produsele lipsă în acele zile au last_seen / n_days mai mici; în analiza în timp tratează"
+                " aceste zile ca parțiale (crawl_runs / *_log.json, câmpul complete).")
     print("\nProduse cu fiecare specificație completată (%):")
     found = products[[c for c in SPEC_COLUMNS if c not in FLAGS]].notna().mean() * 100
     print(found.round().astype(int).to_string())

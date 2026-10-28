@@ -1,0 +1,19 @@
+{
+  "shop": "cel",
+  "started_at": "2026-10-26T23:21:26+02:00",
+  "price_range": [
+    10000,
+    20000
+  ],
+  "pages": 19,
+  "products": 321,
+  "seen_total": 1039,
+  "no_price": 42,
+  "stopped_because": "fără produse (sfârșitul listei) la pagina 19",
+  "complete": true,
+  "methods": {
+    "selector": 18,
+    "generic": 1
+  },
+  "finished_at": "2026-10-26T23:23:01+02:00"
+}
