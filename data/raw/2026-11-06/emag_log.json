@@ -1,0 +1,19 @@
+{
+  "shop": "emag",
+  "started_at": "2026-11-06T22:38:58+02:00",
+  "price_range": [
+    5000,
+    25000
+  ],
+  "pages": 64,
+  "products": 3835,
+  "seen_total": 3837,
+  "listed": 3837,
+  "no_price": 0,
+  "stopped_because": "pagina 65 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p65/c (sfârșitul listei)",
+  "complete": true,
+  "methods": {
+    "selector": 64
+  },
+  "finished_at": "2026-11-06T22:44:56+02:00"
+}

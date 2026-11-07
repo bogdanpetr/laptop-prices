@@ -2,8 +2,8 @@
 Crawler zilnic pentru prețurile laptopurilor (eMAG, evoMAG, CEL.ro).
 
 Parcurge categoria "laptopuri" din fiecare magazin, păstrează doar laptopurile cu
-prețul între --min-price și --max-price (implicit 10.000 - 20.000 lei) și salvează
-într-o bază de date SQLite: data/laptops.db
+prețul între --min-price și --max-price (implicit 5.000 - 25.000 lei; până pe 5.11.2026, 10.000 - 20.000)
+și salvează într-o bază de date SQLite: data/laptops.db
     tabelul prices      - un rând pe (zi, magazin, produs)
     tabelul crawl_runs  - jurnalul fiecărei rulări
 și în data/raw/<AAAA-LL-ZZ>/<magazin>.csv.gz (datele publicate în repo; --no-csv le oprește).
@@ -37,9 +37,10 @@ from bs4 import BeautifulSoup
 from protego import Protego
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import black_friday  # noqa: E402
 import part_numbers  # noqa: E402
 from db import connect, count_saved, save_run, typical_count  # noqa: E402
-from shops import COLUMNS, SHOPS, find_next_url, parse_listing  # noqa: E402
+from shops import COLUMNS, SHOPS, find_next_url, listed_count, parse_listing  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -53,6 +54,7 @@ HEADERS = {
     "Accept-Language": "ro-RO,ro;q=0.9,en;q=0.8",
 }
 BLOCK_CODES = {401, 403, 429, 451, 511}
+LISTED_SHARE = 0.95  # o listă parcursă până la capăt are cel puțin atâtea din produsele anunțate de magazin
 
 
 class Blocked(Exception):
@@ -209,8 +211,9 @@ def crawl_shop(shop, fetcher, robots, max_pages, delay, price_range, debug_dir=N
     started = datetime.now(TZ)
     rows, seen = [], set()
     # complete = rularea a ajuns la sfârșitul listei (nu s-a oprit din cauza unei blocări, erori sau a limitei)
+    # listed = câte produse spune magazinul, pe pagina 1, că are lista (eMAG; None la celelalte)
     log = {"shop": shop.name, "started_at": started.isoformat(timespec="seconds"),
-           "price_range": [pmin, pmax], "pages": 0, "products": 0, "seen_total": 0,
+           "price_range": [pmin, pmax], "pages": 0, "products": 0, "seen_total": 0, "listed": None,
            "no_price": 0, "stopped_because": None, "complete": False, "methods": {}}
     crawl_delay = robots.crawl_delay(shop.start_url) or 0
     next_url, early_stop = "", False
@@ -269,10 +272,21 @@ def crawl_shop(shop, fetcher, robots, max_pages, delay, price_range, debug_dir=N
             (debug_dir / f"{shop.name}_p{n}.html").write_text(html, encoding="utf-8")
 
         page_rows, method = parse_listing(shop, html, final_url)
+        if n == 1:
+            log["listed"] = listed_count(shop, html)
         if debug_dir and n == 1:
             log["sample"] = page_rows[:5]  # pentru --test: exemple de pe pagina 1, indiferent de preț
         log["pages"] = n
         log["methods"][method] = log["methods"].get(method, 0) + 1
+        if (n == 1 and shop.list_page_limit and max_pages > shop.list_page_limit and log["listed"] and page_rows
+                and log["listed"] > shop.list_page_limit * len(page_rows)):
+            # magazinul spune pe pagina 1 că lista are mai multe pagini decât arată: crawl_ranges o cere din nou,
+            # împărțită, fără să parcurgă întâi primele 100 de pagini (ar fi cerute de două ori). Pe 7.11.2026 ANABLUE
+            # COMPUTERS și-a pus ofertele înapoi în listă: 10.634 de produse la 5.000-25.000 lei, ~178 de pagini
+            log["stopped_because"] = (f"lista are {log['listed']} de produse, peste cele {shop.list_page_limit} de "
+                                      "pagini pe care le arată magazinul")
+            log["list_limit"] = True
+            break
         if not page_rows:
             if looks_blocked(html):
                 reason = "pagină blocată / captcha"
@@ -373,6 +387,33 @@ def crawl_ranges(shop, fetcher, robots, max_pages, delay, price_range, debug_dir
     return merged, out
 
 
+def check_count(log, n_rows, typical):
+    """O rulare „completă” cu prea puține produse devine incompletă: de obicei e o pagină de blocare nerecunoscută,
+    luată drept sfârșitul listei. Dacă magazinul spune câte produse are lista (eMAG), se compară cu acel număr;
+    altfel cu typical, numărul obișnuit de produse (mediana zilelor anterioare). Întoarce o notă pentru rezumat
+    când lista e completă, dar mult mai scurtă decât de obicei (altfel "")."""
+    if not log["complete"]:
+        return ""
+    listed, short = log.get("listed"), bool(typical) and n_rows < typical / 2
+    if listed and log["seen_total"] < listed * LISTED_SHARE:
+        log["complete"] = False
+        log["stopped_because"] += f" | suspect: {log['seen_total']} produse văzute, lista are {listed}"
+        print(f"  ATENȚIE: am văzut doar {log['seen_total']} din cele {listed} produse ale listei: probabil o blocare "
+              "sau o pagină schimbată; rularea e tratată ca incompletă")
+    elif short and not listed:
+        log["complete"] = False
+        log["stopped_because"] += f" | suspect: doar {n_rows} produse, de obicei ~{typical}"
+        print(f"  ATENȚIE: doar {n_rows} produse, de obicei ~{typical}: probabil o blocare sau o pagină schimbată; "
+              "rularea e tratată ca incompletă")
+    elif short:
+        # lista chiar e mai scurtă și magazinul o confirmă (31.10.2026: un vânzător din marketplace-ul eMAG
+        # și-a scos ~3.600 de oferte, iar lista a scăzut de la ~4.850 la 1.282 de produse)
+        note = f"doar {n_rows} produse, de obicei ~{typical}, dar lista e completă: magazinul arată {listed}"
+        print(f"  notă: {note}")
+        return note
+    return ""
+
+
 def _write_atomic(path, write):
     """Scrie într-un fișier temporar, apoi îl pune în locul celui vechi: o oprire în timpul scrierii
     (Ctrl+C, laptop închis) lasă fișierul vechi întreg, nu unul pe jumătate scris."""
@@ -414,6 +455,8 @@ def print_sample(rows, k=5):
             extra.append(f"{r['rating']}★ ({r['n_reviews']})")
         if r.get("stock_text"):
             extra.append(r["stock_text"])
+        if r.get("seller"):
+            extra.append(f"vândut de {r['seller']}")
         print(f"     - {(r['title'] or '?')[:75]:<75} | {price} | {', '.join(extra)}")
 
 
@@ -428,8 +471,12 @@ def main():
     ap.add_argument("--max-pages", type=int, help="limită de pagini per magazin")
     ap.add_argument("--delay", type=float, nargs=2, default=(3.0, 6.0), metavar=("MIN", "MAX"),
                     help="pauza dintre pagini, în secunde (implicit 3-6)")
-    ap.add_argument("--min-price", type=float, default=10_000, help="preț minim, lei (implicit 10000)")
-    ap.add_argument("--max-price", type=float, default=20_000, help="preț maxim, lei (implicit 20000)")
+    # studiul privește laptopurile de 10.000-20.000 lei; colectarea merge de la 5.000 la 25.000, ca un laptop din
+    # interval să fie urmărit și când e redus cu până la 50% sau se scumpește cu până la 25%. Până pe 5.11.2026
+    # intervalul a fost 10.000-20.000: de Black Friday, produsele de la margini au ieșit din listă tocmai când au fost
+    # reduse sau când oferta eMAG s-a epuizat și s-a afișat una mai scumpă (vezi README, „Intervalul de preț”)
+    ap.add_argument("--min-price", type=float, default=5_000, help="preț minim, lei (implicit 5000)")
+    ap.add_argument("--max-price", type=float, default=25_000, help="preț maxim, lei (implicit 25000)")
     ap.add_argument("--no-csv", action="store_true",
                     help="nu salva CSV.gz-ul zilnic în data/raw/ (implicit se salvează)")
     ap.add_argument("--db", type=Path, default=DB_PATH, help="fișierul SQLite (implicit data/laptops.db)")
@@ -452,7 +499,7 @@ def main():
 
     http, browser, con = None, None, None
     found, interrupted = [], False  # produsele găsite azi, pentru part number
-    summary = []  # (magazin, complet?, ce s-a salvat, motivul opririi) pentru rezumatul de la final
+    summary = []  # (magazin, complet?, ce s-a salvat, motivul opririi, notă) pentru rezumatul de la final
     try:
         for name in args.shops:
             shop = SHOPS[name]
@@ -479,7 +526,8 @@ def main():
 
             if args.test:
                 print(f"  pagina 1: {log['seen_total']} produse găsite, {len(rows)} în interval, "
-                      f"{log['no_price']} fără preț (metoda: {', '.join(log['methods']) or '-'})")
+                      f"{log['no_price']} fără preț (metoda: {', '.join(log['methods']) or '-'})"
+                      + (f"; lista are {log['listed']} de produse" if log.get("listed") else ""))
                 print("  primele produse de pe pagina 1 (compară titlul și prețul cu site-ul):")
                 print_sample(log.get("sample", []))
                 if log["seen_total"] and not rows:
@@ -494,16 +542,10 @@ def main():
 
             if not log.get("blocked"):  # un magazin care ne blochează azi nu mai primește nici cereri pentru part number
                 found += [{"shop": name, "product_id": r["product_id"], "url": r["url"], "title": r["title"],
-                           "price": r["price"]} for r in rows]
+                           "price": r["price"], "seller": r.get("seller")} for r in rows]
             if con is None:
                 con = connect(args.db)
-            typical = typical_count(con, name, day, args.min_price, args.max_price)
-            if log["complete"] and typical and len(rows) < typical / 2:
-                # ex. o pagină de blocare nerecunoscută, luată drept sfârșitul listei
-                log["complete"] = False
-                log["stopped_because"] += f" | suspect: doar {len(rows)} produse, de obicei ~{typical}"
-                print(f"  ATENȚIE: doar {len(rows)} produse, de obicei ~{typical}: probabil o blocare sau o pagină "
-                      "schimbată; rularea e tratată ca incompletă")
+            note = check_count(log, len(rows), typical_count(con, name, day, args.min_price, args.max_price))
             already = count_saved(con, day, name)
             if rows and not log["complete"] and already >= len(rows):
                 # o rulare oprită la jumătate (blocare, eroare, Ctrl+C) nu înlocuiește una mai completă din aceeași zi
@@ -519,7 +561,7 @@ def main():
                     kept = f"niciun produs nou; rămân {already} salvate deja azi" if already else "niciun produs"
                 if not args.no_csv:
                     save(rows, log, name, day, scraped_at, DATA / "raw" / day)
-            summary.append((name, log["complete"], kept, log["stopped_because"]))
+            summary.append((name, log["complete"], kept, log["stopped_because"], note))
             if log["stopped_because"]:
                 print(f"  oprit: {log['stopped_because']}")
             if log.get("interrupted"):
@@ -527,15 +569,24 @@ def main():
                 break
         # după ce prețurile zilei sunt salvate: o blocare aici nu le mai poate afecta
         if found and args.max_part_numbers > 0 and not interrupted:
+            if day <= black_friday.UNTIL and any(f["shop"] == "emag" for f in found):
+                # înaintea part number-ului: bannerul cu prețul de Black Friday epuizat dispare după campanie,
+                # part number-ul nu (paginile eMAG ale zilei intră în aceeași limită, part_numbers.SHOP_MAX)
+                print("\n=== Black Friday: prețurile epuizate, din pagina produsului ===")
+                try:
+                    black_friday.update(delay=tuple(args.delay), raw_dir=DATA / "raw")
+                except Exception as e:  # noqa: BLE001 - prețurile zilei sunt salvate; part number-ul continuă
+                    print(f"  eroare la verificarea pentru Black Friday: {e}")
             print("\n=== part number ===")
             part_numbers.update(pd.DataFrame(found), args.max_part_numbers, tuple(args.delay),
                                 DATA / "raw" / part_numbers.FILE_NAME)
         if summary:
             print(f"\n=== rezumat {day} ===")
-            for name, complete, kept, reason in summary:
+            for name, complete, kept, reason, note in summary:
                 print(f"  {name:<7} {'complet   ' if complete else 'INCOMPLET '} {kept}"
+                      + (f"\n          notă: {note}" if complete and note else "")
                       + ("" if complete else f"\n          motiv: {reason}"))
-            if not all(complete for _, complete, _, _ in summary):
+            if not all(complete for _, complete, *_ in summary):
                 print("  -> pentru magazinele incomplete rulează din nou mai târziu sau mâine; datele bune salvate "
                       "deja nu sunt înlocuite de o rulare incompletă")
     finally:

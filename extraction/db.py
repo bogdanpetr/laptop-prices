@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS prices (
     n_reviews    INTEGER,
     stock_text   TEXT,
     in_stock     INTEGER,            -- 1 / 0 / NULL (necunoscut)
+    seller       TEXT,               -- vânzătorul ofertei din listă (eMAG); NULL la evoMAG și CEL
     page         INTEGER,
     rank         INTEGER,
     parse_method TEXT,
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 """
 
 PRICE_COLS = ["date", "scraped_at", "shop", "product_id", "title", "url", "price", "old_price",
-              "rrp", "lowest_30d", "rating", "n_reviews", "stock_text", "in_stock",
+              "rrp", "lowest_30d", "rating", "n_reviews", "stock_text", "in_stock", "seller",
               "page", "rank", "parse_method"]
 
 
@@ -56,6 +57,10 @@ def connect(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
+    # o bază creată înainte de coloana seller (31.10.2026) o primește acum, goală la rândurile vechi
+    if "seller" not in [col[1] for col in con.execute("PRAGMA table_info(prices)")]:
+        with con:
+            con.execute("ALTER TABLE prices ADD COLUMN seller TEXT")
     return con
 
 

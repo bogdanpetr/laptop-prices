@@ -57,10 +57,19 @@ MAX_ERRORS = 3
 # limita de pagini eMAG pe zi, oricât de mare e --max. Se adună toate rulările zilei (crawl.py și rulările
 # separate): o limită pe rulare era ocolită rulând din nou (24.10: 486 de pagini eMAG)
 SHOP_MAX = {"emag": 150}
-# la eMAG, produsele cu preț întreg (fără bani) sunt aproape toate oferte ale unui singur vânzător din
-# marketplace (ANABLUE COMPUTERS, configurații modificate), cu coduri inventate: din 1.627 de pagini
-# verificate până pe 23.10, doar 5% aveau part number, față de 65% la prețurile cu bani (eMAG și
-# ceilalți vânzători). Nu sunt deschise: ar fi mii de cereri aproape fără rezultat
+# paginile de produs deschise de black_friday.py (prețurile de Black Friday epuizate) intră în aceeași limită pe zi
+BF_FILE_NAME = "black_friday.csv"
+# Unii vânzători din marketplace-ul eMAG pun în pagină coduri proprii, nu part number-ul producătorului
+# (configurații cu RAM / SSD mărite, coduri interne): paginile produselor lor nu se deschid, oricare ar fi prețul,
+# fiindcă ar fi cereri aproape fără rezultat. Un vânzător e recunoscut după cel puțin SKIP_MIN_PAGES pagini
+# verificate, cu part number la mai puțin de SKIP_MAX_SHARE dintre ele. Pe 5.11.2026: ANABLUE COMPUTERS 52 din
+# 1.567 ('213440GB1TB'), LAPTOK.COM 0 din 101 ('18681296151'), MM CORP SPÓŁKA 0 din 98 ('3176-32GB-4TB'),
+# TEKADVICE 0 din 54, DMAG 0 din 38, Home Center Distribution 0 din 30 ('PKY435147DPMO'), Metrostore 0 din 14
+SKIP_MIN_PAGES = 10
+SKIP_MAX_SHARE = 0.05
+# Lista eMAG arată vânzătorul doar din 31.10.2026. La produsele fără vânzător cunoscut (văzute ultima dată
+# înainte), prețul întreg (fără bani) ține locul lui: atunci era aproape mereu ANABLUE COMPUTERS (din 1.627 de
+# pagini verificate până pe 23.10, doar 5% aveau part number, față de 65% la prețurile cu bani)
 WHOLE_PRICE_SKIP = {"emag"}
 SHOP_SELLERS = {"emag", "evomag", "cel.ro"}  # vândute de magazin: codul vine din catalogul producătorului
 NO_SELLER_SHOPS = {"cel", "evomag"}  # magazine fără marketplace în care pagina nu arată mereu vânzătorul
@@ -191,32 +200,70 @@ def _save(new, path):
         print(f"  nu pot scrie {path}: e deschis în alt program (ex. Excel). Închide-l; reîncerc la următoarea salvare")
 
 
+def pages_today(table, raw_dir, today):
+    """Paginile de produs deschise azi, pe magazin: cele pentru part number (table) și cele pentru prețurile de Black
+    Friday (raw_dir/BF_FILE_NAME). Toate intră în limita pe zi SHOP_MAX."""
+    used = table.loc[table["checked_at"] == today, "shop"].value_counts()
+    bf_path = raw_dir / BF_FILE_NAME
+    if bf_path.exists():
+        bf = pd.read_csv(bf_path, dtype=str, usecols=["shop", "checked_at"])
+        used = used.add(bf.loc[bf["checked_at"] == today, "shop"].value_counts(), fill_value=0)
+    return used.astype(int)
+
+
+def low_yield_sellers(table):
+    """Vânzătorii (cu litere mici) ale căror pagini verificate au rareori part number: pun coduri proprii."""
+    seller = table["seller"].astype("string").str.strip().str.lower()
+    stats = table.assign(_seller=seller).dropna(subset=["_seller"]).groupby("_seller")["part_number"].agg(
+        ["size", "count"])
+    low = (stats["size"] >= SKIP_MIN_PAGES) & (stats["count"] < SKIP_MAX_SHARE * stats["size"])
+    return set(stats.index[low]) - SHOP_SELLERS
+
+
+def skipped(targets, table):
+    """True la produsele a căror pagină nu se deschide intenționat: oferte eMAG ale vânzătorilor cu coduri proprii
+    (low_yield_sellers) sau, fără vânzător cunoscut (văzute ultima dată înainte de 31.10.2026), cu preț întreg."""
+    seller = (targets["seller"] if "seller" in targets else pd.Series(None, index=targets.index, dtype=object))
+    seller = seller.astype("string").str.strip().str.lower()
+    seller = seller.mask(seller.eq("").fillna(False))
+    by_seller = seller.isin(low_yield_sellers(table)).fillna(False).astype(bool)
+    price = targets["price"] if "price" in targets else pd.Series(None, index=targets.index, dtype=float)
+    cents = (pd.to_numeric(price, errors="coerce") * 100).round()
+    whole = seller.isna().to_numpy() & (cents % 100 == 0).to_numpy()
+    return targets["shop"].isin(WHOLE_PRICE_SKIP) & (by_seller | whole)
+
+
 def targets_from_raw(raw_dir=RAW):
-    """Produsele din CSV-urile zilnice, cu cel mai recent URL, titlu și preț (cele văzute recent întâi)."""
+    """Produsele din CSV-urile zilnice, cu cel mai recent URL, titlu, preț și vânzător (cele văzute recent întâi).
+    Vânzătorul lipsește din CSV-urile de dinainte de 31.10.2026."""
     files = sorted(raw_dir.glob("*/*.csv.gz"))
-    cols = ["date", "shop", "product_id", "url", "title", "price"]
+    cols = ["date", "shop", "product_id", "url", "title", "price", "seller"]
     if not files:
         return pd.DataFrame(columns=cols[1:])
-    df = pd.concat([pd.read_csv(f, dtype={"product_id": str}, usecols=cols) for f in files], ignore_index=True)
+    df = pd.concat([pd.read_csv(f, dtype={"product_id": str}, usecols=lambda c: c in cols) for f in files],
+                   ignore_index=True).reindex(columns=cols)
     return df.sort_values("date", ascending=False).drop_duplicates(["shop", "product_id"])[cols[1:]]
 
 
 def update(targets, max_pages=DEFAULT_MAX, delay=(3.0, 6.0), path=RAW / FILE_NAME, fetcher=None, robots=None):
     """Deschide paginile produselor încă neverificate (cel mult max_pages) și adaugă rezultatul în path.
-    targets: DataFrame cu shop, product_id, url, title și, opțional, price. Întoarce numărul de pagini deschise."""
+    targets: DataFrame cu shop, product_id, url, title și, opțional, price și seller. Întoarce numărul de pagini
+    deschise."""
     from crawl import Blocked, HttpFetcher, Robots, looks_blocked, redirected_to_block  # aici: crawl.py importă modulul
 
     table = load(path)
     done = set(zip(table["shop"], table["product_id"]))
     todo = targets.drop_duplicates(["shop", "product_id"])
     todo = todo[[(s, str(p)) not in done for s, p in zip(todo["shop"], todo["product_id"])]]
-    if "price" in todo:
-        cents = (pd.to_numeric(todo["price"], errors="coerce") * 100).round()
-        whole = todo["shop"].isin(WHOLE_PRICE_SKIP) & (cents % 100 == 0)
-        if whole.any():
-            print(f"part number: sar peste {whole.sum()} produse eMAG cu preț întreg (oferte din marketplace, "
-                  "aproape niciodată cu part number)")
-        todo = todo[~whole]
+    skip = skipped(todo, table)
+    if skip.any():
+        who = (todo.loc[skip, "seller"] if "seller" in todo
+               else pd.Series(None, index=todo.index[skip.to_numpy()], dtype=object))
+        who = who.astype("string").fillna("preț întreg, fără vânzător în listă").value_counts()
+        print(f"part number: sar peste {skip.sum()} produse eMAG ale vânzătorilor care pun coduri proprii, nu "
+              f"part number-ul producătorului ({', '.join(f'{k} {v}' for k, v in who.head(4).items())}"
+              f"{', ...' if len(who) > 4 else ''})")
+    todo = todo[~skip]
     # cererile alternează între magazine (CEL, evoMAG, eMAG, CEL, ...): fiecare site primește o cerere
     # la ~15 secunde, nu sute la rând, ca să nu declanșăm verificările anti-bot
     todo = todo.assign(_n=todo.groupby("shop").cumcount(), _s=todo["shop"].map(SHOP_ORDER).fillna(len(SHOP_ORDER)))
@@ -224,7 +271,7 @@ def update(targets, max_pages=DEFAULT_MAX, delay=(3.0, 6.0), path=RAW / FILE_NAM
     # limita pe zi a magazinului (SHOP_MAX) cuprinde și paginile deschise azi de rulările anterioare;
     # produsele peste ea rămân pentru zilele următoare
     today = datetime.now(TZ).date().isoformat()
-    used = table.loc[table["checked_at"] == today, "shop"].value_counts()
+    used = pages_today(table, path.parent, today)  # cu tot cu paginile pentru Black Friday (black_friday.py)
     quota = {shop: max(0, cap - used.get(shop, 0)) for shop, cap in SHOP_MAX.items()}
     over = todo["_n"] >= todo["shop"].map(quota).fillna(len(todo))
     for shop, count in todo.loc[over, "shop"].value_counts().items():

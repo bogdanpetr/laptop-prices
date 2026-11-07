@@ -32,6 +32,8 @@ class Shop:
     title_selector: str = ""
     price_selector: str = ""
     price_json: str = ""      # atribut cu un JSON care conține "price"; are prioritate față de price_selector
+    offer_attr: str = ""      # atributul cardului cu ID-ul ofertei, al cărei vânzător e în datele paginii (eMAG)
+    listed_re: re.Pattern = None  # câte produse spune magazinul că are lista (grupul 1), pentru verificarea rulării
     use_browser: bool = False  # True dacă produsele sunt încărcate cu JavaScript
     wait_selector: str = ""    # ce așteaptă browserul să apară în pagină
     max_pages: int = 100       # limita de pagini pentru o listă
@@ -53,9 +55,11 @@ SHOPS = {
     "emag": Shop(
         name="emag",
         # doar laptopurile din intervalul de preț (filtrul eMAG), de la cel mai scump la cel mai ieftin.
-        # La 10.000-20.000 lei lista are ~78 de pagini. eMAG arată cel mult 100 de pagini dintr-o listă;
-        # dacă lista crește peste atât (ex. de Black Friday), crawlerul o cere din nou ca două liste,
-        # 10.000-15.000 și 15.000-20.000 lei (list_page_limit, crawl.crawl_ranges)
+        # La 10.000-20.000 lei lista a avut 78-89 de pagini, apoi 22 din 31.10.2026, după ce un vânzător din
+        # marketplace și-a scos ofertele; la 5.000-25.000 lei (intervalul implicit din 6.11.2026) 64 de pagini, apoi
+        # ~180 din 7.11.2026, când același vânzător (ANABLUE COMPUTERS) s-a întors.
+        # eMAG arată cel mult 100 de pagini dintr-o listă; dacă lista crește peste atât, crawlerul o cere din nou
+        # ca două liste, jumătatea scumpă și cea ieftină a intervalului (list_page_limit, crawl.crawl_ranges)
         start_url="https://www.emag.ro/laptopuri/pret,intre-{min}-si-{max}/sort-pricedesc/c",
         page_url="https://www.emag.ro/laptopuri/pret,intre-{min}-si-{max}/sort-pricedesc/p{n}/c",
         sorted_desc=True,
@@ -64,6 +68,9 @@ SHOPS = {
         title_selector="a.card-v2-title, .card-v2-title, h2",
         price_selector=".product-new-price",
         price_json="data-product",  # prețul produsului; .product-new-price poate fi prețul unui pachet
+        offer_attr="data-offer-id",  # vânzătorul ofertei afișate: eMAG sau un vânzător din marketplace
+        # '<strong>1 - 60</strong> din <strong>1282</strong> de produse' (sub 20 de produse, fără „de”)
+        listed_re=re.compile(r"din\s*<strong>\s*([\d.]+)\s*</strong>\s*(?:de\s+)?produse"),
         max_pages=300,
         list_page_limit=100,
     ),
@@ -93,7 +100,7 @@ SHOPS = {
 COLUMNS = [
     "date", "scraped_at", "shop", "product_id", "title", "url",
     "price", "old_price", "rrp", "lowest_30d",
-    "rating", "n_reviews", "stock_text", "in_stock",
+    "rating", "n_reviews", "stock_text", "in_stock", "seller",
     "page", "rank", "parse_method",
 ]
 
@@ -128,7 +135,28 @@ def _json_price(card, attr):
         return None
 
 
-def _row_from_card(card, pid, url, title, price_el=None, current=None):
+_OFFER_SELLER = re.compile(r'"offer":\{"id":(\d+),"vendor":\{"name":\{"default":"((?:[^"\\]|\\.)*)"')
+
+
+def _offer_sellers(html):
+    """ID-ul ofertei -> vânzătorul, din datele produselor pe care eMAG le pune în pagina de listă:
+    "offer":{"id":443983537,"vendor":{"name":{"default":"eMAG","display":"eMAG"}}}"""
+    sellers = {}
+    for offer_id, name in _OFFER_SELLER.findall(html):
+        try:
+            sellers[offer_id] = json.loads(f'"{name}"')  # escape-urile JSON din nume (ex. MM CORP SPÓŁKA)
+        except ValueError:
+            sellers[offer_id] = name
+    return sellers
+
+
+def listed_count(shop, html):
+    """Câte produse spune magazinul că are lista (None dacă nu afișează numărul sau nu îl găsim)."""
+    m = shop.listed_re.search(html or "") if shop.listed_re else None
+    return int(m.group(1).replace(".", "")) if m else None
+
+
+def _row_from_card(card, pid, url, title, price_el=None, current=None, seller=None):
     text = card.get_text(" ", strip=True)
     if current is None and price_el is not None:
         current = parse_price(price_el.get_text(" ", strip=True))
@@ -140,11 +168,11 @@ def _row_from_card(card, pid, url, title, price_el=None, current=None):
         "url": re.sub(r"[?#].*", "", url),  # fără parametrii de tracking (?ref=..., &recid=...)
         **prices,
         "rating": rating, "n_reviews": n_reviews,
-        "stock_text": stock_text, "in_stock": in_stock,
+        "stock_text": stock_text, "in_stock": in_stock, "seller": seller,
     }
 
 
-def _parse_with_selectors(shop, soup, page_url):
+def _parse_with_selectors(shop, soup, page_url, sellers):
     rows = []
     if not shop.card_selector:
         return rows
@@ -165,7 +193,8 @@ def _parse_with_selectors(shop, soup, page_url):
                  or (best_title(title_el.get("title"), title_el.get_text(" ", strip=True)) if title_el else None)
                  or best_title(*_title_candidates(card, page_url, shop.product_re)))
         price_el = card.select_one(shop.price_selector) if shop.price_selector else None
-        rows.append(_row_from_card(card, pid, url, title, price_el, _json_price(card, shop.price_json)))
+        seller = sellers.get(card.get(shop.offer_attr)) if shop.offer_attr else None
+        rows.append(_row_from_card(card, pid, url, title, price_el, _json_price(card, shop.price_json), seller))
     return rows
 
 
@@ -182,7 +211,8 @@ def _parse_generic(shop, soup, page_url):
 def parse_listing(shop: Shop, html: str, page_url: str):
     """Returnează (lista de produse, metoda folosită)."""
     soup = BeautifulSoup(html, "lxml")
-    rows, method = _parse_with_selectors(shop, soup, page_url), "selector"
+    sellers = _offer_sellers(html) if shop.offer_attr else {}
+    rows, method = _parse_with_selectors(shop, soup, page_url, sellers), "selector"
     # metoda generic doar dacă selectorii nu mai găsesc niciun produs cu preț (designul s-a schimbat);
     # altfel ar lua și produsele din meniuri, carusele sau "vizualizate recent"
     if not any(r["price"] for r in rows):

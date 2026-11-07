@@ -1,0 +1,19 @@
+{
+  "shop": "emag",
+  "started_at": "2026-11-03T23:09:01+02:00",
+  "price_range": [
+    10000,
+    20000
+  ],
+  "pages": 23,
+  "products": 1349,
+  "seen_total": 1349,
+  "listed": 1349,
+  "no_price": 0,
+  "stopped_because": "pagina 24 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p24/c (sfârșitul listei)",
+  "complete": true,
+  "methods": {
+    "selector": 23
+  },
+  "finished_at": "2026-11-03T23:11:37+02:00"
+}
