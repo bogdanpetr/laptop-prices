@@ -13,10 +13,9 @@ eMAG înainte de Black Friday și apoi trecute la alt vânzător, scoase din lis
 data/raw/black_friday.csv, un rând pe produs:
     shop, product_id, bf_price (prețul de Black Friday epuizat; gol dacă pagina nu are bannerul),
     page_price, page_seller, page_stock (oferta din pagină la verificare), checked_at
-Paginile intră în aceeași limită zilnică de pagini eMAG ca part number-ul (part_numbers.SHOP_MAX). crawl.py îl rulează
-la final, înaintea part number-ului, până pe UNTIL; part number-ul nu se schimbă, deci poate aștepta câteva zile.
+crawl.py îl rulează la final, înaintea part number-ului, până pe UNTIL; part number-ul nu se schimbă, deci poate aștepta.
 
-    python extraction/black_friday.py              # următoarele produse, în limita zilei
+    python extraction/black_friday.py              # toate produsele neverificate
     python extraction/black_friday.py --max 20 --priorities 0
 """
 import argparse
@@ -38,7 +37,7 @@ from parsing import parse_price  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
-FILE_NAME = part_numbers.BF_FILE_NAME
+FILE_NAME = "black_friday.csv"
 COLUMNS = ["shop", "product_id", "bf_price", "page_price", "page_seller", "page_stock", "checked_at"]
 TZ = ZoneInfo("Europe/Bucharest")
 SINCE = "2026-10-31"      # de când lista eMAG arată vânzătorul ofertei
@@ -135,9 +134,8 @@ def candidates(raw_dir=RAW):
 
 
 def update(max_pages=None, delay=(3.0, 6.0), raw_dir=RAW, fetcher=None, robots=None, priorities=PRIORITIES):
-    """Deschide paginile produselor încă neverificate din grupurile priorities (None = toate), în limita zilnică de
-    pagini eMAG, comună cu part number-ul, și adaugă rezultatul în raw_dir/black_friday.csv. Întoarce numărul de
-    pagini deschise."""
+    """Deschide paginile produselor încă neverificate din grupurile priorities (None = toate), cel mult max_pages
+    (None = toate), și adaugă rezultatul în raw_dir/black_friday.csv. Întoarce numărul de pagini deschise."""
     from crawl import Blocked, HttpFetcher, Robots, looks_blocked, redirected_to_block  # aici: crawl.py importă modulul
 
     path = raw_dir / FILE_NAME
@@ -147,16 +145,12 @@ def update(max_pages=None, delay=(3.0, 6.0), raw_dir=RAW, fetcher=None, robots=N
     if priorities is not None:
         todo = todo[todo["priority"].isin(priorities)]
     today = datetime.now(TZ).date().isoformat()
-    used = int(part_numbers.pages_today(part_numbers.load(raw_dir / part_numbers.FILE_NAME), raw_dir, today)
-               .get("emag", 0))
-    quota = max(0, part_numbers.SHOP_MAX["emag"] - used)
-    n = min(len(todo), quota, quota if max_pages is None else max_pages)
+    n = len(todo) if max_pages is None else min(len(todo), max_pages)
     if todo.empty:
         print("Black Friday: niciun produs nou de verificat")
         return 0
     if n <= 0:
-        print(f"Black Friday: {len(todo)} produse neverificate; limita zilei la eMAG e atinsă "
-              f"({part_numbers.SHOP_MAX['emag']} de pagini, deschise azi: {used}); continuă mâine")
+        print(f"Black Friday: {len(todo)} produse neverificate (nu deschid nicio pagină)")
         return 0
     print(f"Black Friday: {len(todo)} produse vândute de eMAG neverificate "
           f"({', '.join(f'prioritatea {k}: {v}' for k, v in todo['priority'].value_counts().sort_index().items())}); "
@@ -220,8 +214,7 @@ def main():
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     ap = argparse.ArgumentParser(description="Prețurile de Black Friday epuizate, din paginile produselor eMAG")
-    ap.add_argument("--max", type=int, help=f"câte pagini deschide (implicit cât permite limita zilei, "
-                                            f"{part_numbers.SHOP_MAX['emag']} de pagini eMAG cu tot cu part number)")
+    ap.add_argument("--max", type=int, help="câte pagini deschide (implicit toate produsele neverificate)")
     ap.add_argument("--delay", type=float, nargs=2, default=(3.0, 6.0), metavar=("MIN", "MAX"),
                     help="pauza dintre pagini, în secunde (implicit 3-6; la eMAG cel puțin 8)")
     ap.add_argument("--raw", type=Path, default=RAW, help="folderul cu CSV-urile zilnice (implicit data/raw)")

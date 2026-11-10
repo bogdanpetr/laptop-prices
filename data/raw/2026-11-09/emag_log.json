@@ -1,0 +1,19 @@
+{
+  "shop": "emag",
+  "started_at": "2026-11-09T07:48:39+02:00",
+  "price_range": [
+    5000,
+    25000
+  ],
+  "pages": 180,
+  "products": 10462,
+  "seen_total": 10466,
+  "listed": 10631,
+  "no_price": 0,
+  "stopped_because": "lista 5,000-25,000 împărțită: pagina 43 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p43/c (sfârșitul listei) | lista 5,000-15,000 împărțită: pagina 60 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p60/c (sfârșitul listei) | pagina 78 a fost redirecționată la https://www.emag.ro/laptopuri/sort-pricedesc/p78/c (sfârșitul listei)",
+  "complete": true,
+  "methods": {
+    "selector": 180
+  },
+  "finished_at": "2026-11-09T08:05:38+02:00"
+}

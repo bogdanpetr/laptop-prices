@@ -208,6 +208,8 @@ def crawl_shop(shop, fetcher, robots, max_pages, delay, price_range, debug_dir=N
     cerut magazinului în URL, dacă e altul (o parte a listei, vezi crawl_ranges)."""
     pmin, pmax = price_range
     lmin, lmax = list_range or price_range
+    # în mesaje: fiecare parte a unei liste împărțite (crawl_ranges) are paginile ei, numerotate de la 1
+    tag = f"{shop.name} {lmin:,.0f}-{lmax:,.0f}" if list_range else shop.name
     started = datetime.now(TZ)
     rows, seen = [], set()
     # complete = rularea a ajuns la sfârșitul listei (nu s-a oprit din cauza unei blocări, erori sau a limitei)
@@ -267,6 +269,7 @@ def crawl_shop(shop, fetcher, robots, max_pages, delay, price_range, debug_dir=N
             # eMAG trimite o pagină de după sfârșitul listei filtrate la lista nefiltrată, pe același site
             log["stopped_because"] = f"pagina {n} a fost redirecționată la {final_url} (sfârșitul listei)"
             log["complete"] = True
+            print(f"  [{tag}] pagina {n}: sfârșitul listei")
             break
         if debug_dir:
             (debug_dir / f"{shop.name}_p{n}.html").write_text(html, encoding="utf-8")
@@ -319,8 +322,8 @@ def crawl_shop(shop, fetcher, robots, max_pages, delay, price_range, debug_dir=N
                 r.update(page=n, rank=len(seen), parse_method=method)
                 rows.append(r)
                 kept += 1
-        print(f"  [{shop.name}] pagina {n}: {len(new)} produse, {kept} în intervalul "
-              f"{pmin:,.0f}-{pmax:,.0f} lei ({method}) | total păstrate {len(rows)}")
+        print(f"  [{tag}] pagina {n}: {len(new)} produse, {kept} în intervalul "
+              f"{pmin:,.0f}-{pmax:,.0f} lei ({method}) | păstrate în această listă {len(rows)}")
 
         if early_stop and prices and max(prices) < pmin:
             log["stopped_because"] = f"prețurile au scăzut sub {pmin:,.0f} lei (listă sortată)"
@@ -356,7 +359,7 @@ def crawl_ranges(shop, fetcher, robots, max_pages, delay, price_range, debug_dir
     if not log.get("list_limit") or "{min}" not in (shop.page_url or "") or not lo < mid < hi:
         return rows, log
     print(f"  [{shop.name}] lista {lo:,.0f}-{hi:,.0f} lei are peste {shop.list_page_limit} pagini: o cer din nou "
-          f"ca două liste, {mid:,}-{hi:,.0f} și {lo:,.0f}-{mid:,} lei")
+          f"ca două liste, {mid:,}-{hi:,.0f} și {lo:,.0f}-{mid:,} lei (fiecare începe de la pagina ei 1, nu e o reluare)")
     parts = [crawl_ranges(shop, fetcher, robots, max_pages, delay, price_range, debug_dir, (mid, hi))]
     if not (parts[0][1].get("interrupted") or parts[0][1].get("blocked")):
         time.sleep(random.uniform(*delay))  # aceeași pauză ca între pagini, și între cele două liste
@@ -571,7 +574,7 @@ def main():
         if found and args.max_part_numbers > 0 and not interrupted:
             if day <= black_friday.UNTIL and any(f["shop"] == "emag" for f in found):
                 # înaintea part number-ului: bannerul cu prețul de Black Friday epuizat dispare după campanie,
-                # part number-ul nu (paginile eMAG ale zilei intră în aceeași limită, part_numbers.SHOP_MAX)
+                # part number-ul nu
                 print("\n=== Black Friday: prețurile epuizate, din pagina produsului ===")
                 try:
                     black_friday.update(delay=tuple(args.delay), raw_dir=DATA / "raw")

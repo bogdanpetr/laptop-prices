@@ -19,7 +19,7 @@ Rezultatul e data/raw/part_numbers.csv, publicat ca restul datelor, un rând pe 
     verificare, cu semnele lui), seller, checked_at
 Codul magazinului (product_id) rămâne cheia colectării zilnice, fiindcă doar el apare în lista de produse;
 tabelul acesta îi asociază part number-ul. Fiecare produs e verificat o singură dată. crawl.py verifică
-la final produsele noi ale zilei și, în limita SHOP_MAX, câteva dintre cele rămase din zilele anterioare.
+la final produsele zilei încă neverificate, cel mult --max-part-numbers pagini.
 Rulat separat (python extraction/part_numbers.py) face același lucru pentru toate produsele colectate.
 """
 import argparse
@@ -53,12 +53,6 @@ HOST_GAP = {"evomag": 15.0, "emag": 8.0}
 # după atâtea erori la rând (ex. eMAG în mentenanță, HTTP 503), magazinul e lăsat pentru rularea următoare:
 # altfel fiecare produs ar aștepta ~3 minute de reîncercări
 MAX_ERRORS = 3
-# eMAG a blocat din nou adresa IP (HTTP 511) pe 23.10, după ~120 de pagini de produs, a doua zi după ~520:
-# limita de pagini eMAG pe zi, oricât de mare e --max. Se adună toate rulările zilei (crawl.py și rulările
-# separate): o limită pe rulare era ocolită rulând din nou (24.10: 486 de pagini eMAG)
-SHOP_MAX = {"emag": 150}
-# paginile de produs deschise de black_friday.py (prețurile de Black Friday epuizate) intră în aceeași limită pe zi
-BF_FILE_NAME = "black_friday.csv"
 # Unii vânzători din marketplace-ul eMAG pun în pagină coduri proprii, nu part number-ul producătorului
 # (configurații cu RAM / SSD mărite, coduri interne): paginile produselor lor nu se deschid, oricare ar fi prețul,
 # fiindcă ar fi cereri aproape fără rezultat. Un vânzător e recunoscut după cel puțin SKIP_MIN_PAGES pagini
@@ -200,17 +194,6 @@ def _save(new, path):
         print(f"  nu pot scrie {path}: e deschis în alt program (ex. Excel). Închide-l; reîncerc la următoarea salvare")
 
 
-def pages_today(table, raw_dir, today):
-    """Paginile de produs deschise azi, pe magazin: cele pentru part number (table) și cele pentru prețurile de Black
-    Friday (raw_dir/BF_FILE_NAME). Toate intră în limita pe zi SHOP_MAX."""
-    used = table.loc[table["checked_at"] == today, "shop"].value_counts()
-    bf_path = raw_dir / BF_FILE_NAME
-    if bf_path.exists():
-        bf = pd.read_csv(bf_path, dtype=str, usecols=["shop", "checked_at"])
-        used = used.add(bf.loc[bf["checked_at"] == today, "shop"].value_counts(), fill_value=0)
-    return used.astype(int)
-
-
 def low_yield_sellers(table):
     """Vânzătorii (cu litere mici) ale căror pagini verificate au rareori part number: pun coduri proprii."""
     seller = table["seller"].astype("string").str.strip().str.lower()
@@ -267,17 +250,9 @@ def update(targets, max_pages=DEFAULT_MAX, delay=(3.0, 6.0), path=RAW / FILE_NAM
     # cererile alternează între magazine (CEL, evoMAG, eMAG, CEL, ...): fiecare site primește o cerere
     # la ~15 secunde, nu sute la rând, ca să nu declanșăm verificările anti-bot
     todo = todo.assign(_n=todo.groupby("shop").cumcount(), _s=todo["shop"].map(SHOP_ORDER).fillna(len(SHOP_ORDER)))
-    todo = todo.sort_values(["_n", "_s"], kind="stable")
-    # limita pe zi a magazinului (SHOP_MAX) cuprinde și paginile deschise azi de rulările anterioare;
-    # produsele peste ea rămân pentru zilele următoare
+    todo = todo.sort_values(["_n", "_s"], kind="stable").drop(columns=["_n", "_s"])
     today = datetime.now(TZ).date().isoformat()
-    used = pages_today(table, path.parent, today)  # cu tot cu paginile pentru Black Friday (black_friday.py)
-    quota = {shop: max(0, cap - used.get(shop, 0)) for shop, cap in SHOP_MAX.items()}
-    over = todo["_n"] >= todo["shop"].map(quota).fillna(len(todo))
-    for shop, count in todo.loc[over, "shop"].value_counts().items():
-        print(f"  [{shop}] cel mult {SHOP_MAX[shop]} de pagini pe zi, oricât de mare e --max, ca să nu fie blocată "
-              f"adresa IP (deschise azi: {used.get(shop, 0)}); {count} produse rămân pentru zilele următoare")
-    todo, rest, waiting = todo[~over].drop(columns=["_n", "_s"]), len(todo), int(over.sum())
+    rest = len(todo)
     if todo.empty or max_pages <= 0:
         print("part number: toate produsele sunt verificate" if not rest else
               f"part number: {rest} produse neverificate (nu deschid nicio pagină)")
@@ -343,9 +318,8 @@ def update(targets, max_pages=DEFAULT_MAX, delay=(3.0, 6.0), path=RAW / FILE_NAM
         if own:
             fetcher.close()
     left = rest - len(new)
-    when = "în zilele următoare" if left == waiting else "la rularea următoare"
     print(f"part number: {len(new)} produse verificate, {found} cu part number"
-          + (f"; rămân {left} neverificate (continuă {when})" if left else ""))
+          + (f"; rămân {left} neverificate (continuă la rularea următoare)" if left else ""))
     return opened
 
 
@@ -355,8 +329,7 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     ap = argparse.ArgumentParser(description="Part number-ul produselor colectate, din paginile lor")
     ap.add_argument("--max", type=int, default=DEFAULT_MAX,
-                    help=f"câte pagini de produs deschide (implicit {DEFAULT_MAX}; la eMAG cel mult "
-                         f"{SHOP_MAX['emag']} pe zi)")
+                    help=f"câte pagini de produs deschide (implicit {DEFAULT_MAX})")
     ap.add_argument("--shops", nargs="+", choices=list(SHOP_ORDER), default=list(SHOP_ORDER))
     ap.add_argument("--delay", type=float, nargs=2, default=(3.0, 6.0), metavar=("MIN", "MAX"),
                     help="pauza dintre pagini, în secunde (implicit 3-6)")

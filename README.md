@@ -92,11 +92,10 @@ După ce prețurile zilei sunt salvate, crawlerul deschide pagina fiecărui prod
 cu cel puțin 8 secunde între două cereri la eMAG și 15 la evoMAG, ca să nu declanșeze blocarea anti-bot)
 și îi citește part number-ul în `data/raw/part_numbers.csv`. Un produs se verifică o singură dată, așa că
 zilnic rămân doar produsele apărute între timp; restul locurilor completează treptat produsele colectate în
-zilele anterioare. La eMAG se deschid cel mult 150 de pagini pe zi, oricât de mare e `--max`, numărate în
-toate rulările zilei (crawlerul și `part_numbers.py` rulat separat): sute de pagini eMAG pe zi au dus pe 21.10
-și 23.10 la blocarea adresei IP (HTTP 511, „trafic neobișnuit de mare”). Produsele eMAG rămase se verifică
-singure în zilele următoare, la rulările crawlerului; după ce limita zilei e atinsă, o nouă rulare în aceeași
-zi nu mai deschide pagini eMAG.
+zilele anterioare. Numărul de pagini îl dă `--max` (la `part_numbers.py`) sau `--max-part-numbers` (la crawler) și e
+respectat exact. Sute de pagini eMAG pe zi au dus pe 21.10, 23.10 și 7.11.2026 la blocarea adresei IP (HTTP 511,
+„trafic neobișnuit de mare”). La o blocare, verificarea se oprește pentru magazinul respectiv, iar produsele rămase
+se reiau la rularea următoare.
 Nu se deschid paginile ofertelor eMAG ale vânzătorilor din marketplace care pun în pagină coduri proprii în locul
 part number-ului (configurații cu RAM sau SSD mărite, coduri interne). Un astfel de vânzător e recunoscut după cel
 puțin 10 pagini verificate, cu part number la mai puțin de 5% dintre ele (pe 5.11.2026: ANABLUE COMPUTERS, LAPTOK.COM,
@@ -108,7 +107,7 @@ așteaptă verificarea. O blocare
 la acest pas nu afectează prețurile zilei, salvate deja; part number-ul nu se schimbă, deci nu se pierde
 nimic dacă e citit peste câteva zile.
 Pe 6–7.11.2026, înaintea part number-ului, crawlerul a deschis și paginile produselor vândute de eMAG, pentru
-prețurile de Black Friday epuizate (`black_friday.py`, vezi mai jos), în aceeași limită de 150 de pagini eMAG pe zi.
+prețurile de Black Friday epuizate (`black_friday.py`, vezi mai jos), în limita de atunci de 150 de pagini eMAG pe zi.
 Bannerul a dispărut pe 7.11, așa că acest pas nu mai rulează (`black_friday.UNTIL`).
 
 **De ce part number-ul nu înlocuiește codul magazinului.** Lista de produse, din care se iau zilnic prețurile,
@@ -387,7 +386,8 @@ df = df.merge(pn[["shop", "product_id", "part_number"]], on=["shop", "product_id
    eMAG arată cel mult 100 de pagini dintr-o listă. Dacă pagina 1 arată mai multe produse decât încap în 100 de pagini,
    crawlerul cere imediat lista din nou ca două liste (jumătatea scumpă și cea ieftină a intervalului), fiecare
    parcursă până la capăt și împărțită la rândul ei dacă e nevoie. Pe 7.11.2026: 10.634 de produse, adică trei liste
-   (15.000–25.000, 10.000–15.000 și 5.000–10.000 lei) și 180 de pagini în total.
+   (15.000–25.000, 10.000–15.000 și 5.000–10.000 lei) și 180 de pagini în total. În consolă, fiecare parte a unei liste
+   împărțite își numără paginile de la 1 și are intervalul în față (`[emag 15,000-25,000] pagina 1`).
    Filtrul eMAG folosește uneori alt preț decât cel afișat, mai mare sau mai mic, așa că câteva produse de la
    marginile intervalului pot lipsi sau apar cu prețul afișat în afara lui (sunt ignorate). Pe 6.11.2026 a fost un
    singur astfel de produs la marginea de jos și niciunul la cea de sus. La un „Pachet promo” (laptop și accesoriu)
